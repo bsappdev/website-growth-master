@@ -1,6 +1,6 @@
 # Website Growth: data and access checklist
 
-Before we begin, please choose one option for each relevant item:
+This is a follow-up, not a starting gate — the free public scan (PageSpeed Insights, Pingdom, SSL Labs, security headers, robots.txt/sitemap, favicon, broken-link crawl, and similar no-login checks) already ran and its findings/fixes are separate from this list. Connecting any of the sources below only unlocks the *next* layer: real user behavior, query-level search performance, conversions, and paid/social data. Choose one option for each relevant item whenever you're ready — there's no need to decide before other work continues:
 
 - **Connect read-only** — guide me to connect the account with the minimum access needed.
 - **Share export** — I will upload a report/CSV/export instead.

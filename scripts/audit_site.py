@@ -41,7 +41,9 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 DEFAULT_MAX_PAGES = 100
 DEFAULT_MAX_REDIRECTS = 8
 DEFAULT_MAX_BODY_BYTES = 2_000_000
+DEFAULT_MAX_ICON_FETCHES = 5
 USER_AGENT = "website-growth-engine-audit/1.0 (+safe-bounded-crawl)"
+ICON_RELS = {"icon", "apple-touch-icon", "apple-touch-icon-precomposed", "mask-icon", "manifest"}
 
 
 def _collapse_text(value: str) -> str:
@@ -111,6 +113,7 @@ class PageParser(HTMLParser):
         self.meta_description: Optional[str] = None
         self.robots: List[str] = []
         self.canonicals: List[str] = []
+        self.icons: List[Dict[str, str]] = []
         self._capture: Optional[str] = None
         self._capture_depth = 0
         self._ignored_depth = 0
@@ -149,6 +152,9 @@ class PageParser(HTMLParser):
             href = attributes.get("href", "")
             if "canonical" in rel_values and href:
                 self.canonicals.append(href)
+            icon_rels = rel_values & ICON_RELS
+            if icon_rels and href:
+                self.icons.append({"rel": " ".join(sorted(icon_rels)), "href": href, "sizes": attributes.get("sizes", "")})
 
     def handle_startendtag(self, tag: str, attrs: Sequence[Tuple[str, Optional[str]]]) -> None:
         # HTMLParser does not call handle_starttag for XHTML-style tags.
@@ -186,6 +192,7 @@ class PageParser(HTMLParser):
             "canonical_hrefs": self.canonicals,
             "links": self.links,
             "images": self.images,
+            "icons": self.icons,
         }
 
 
@@ -215,6 +222,8 @@ class SiteAuditor:
         timeout: float = 10.0,
         max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
         opener: Optional[Any] = None,
+        check_favicon: bool = True,
+        max_icon_fetches: int = DEFAULT_MAX_ICON_FETCHES,
     ) -> None:
         normalized = normalize_http_url(start_url)
         if normalized is None:
@@ -236,6 +245,8 @@ class SiteAuditor:
         self.timeout = timeout
         self.max_body_bytes = max_body_bytes
         self.opener = opener or build_opener(_NoRedirect())
+        self.check_favicon = check_favicon
+        self.max_icon_fetches = max_icon_fetches
 
     def _same_origin(self, url: str) -> bool:
         return _origin(url) == self.origin
@@ -337,6 +348,7 @@ class SiteAuditor:
             "h1": None,
             "canonical": None,
             "robots": [],
+            "icon_links": [],
             "error": fetched.error,
             "body_truncated": fetched.body_truncated,
         }
@@ -352,6 +364,11 @@ class SiteAuditor:
             return record, [], []
         extracted = parser.extracted()
         canonicals = [normalize_http_url(value, fetched.final_url) for value in extracted["canonical_hrefs"]]
+        icon_links = []
+        for icon in extracted["icons"]:
+            target = normalize_http_url(icon.get("href", ""), fetched.final_url)
+            if target:
+                icon_links.append({"rel": icon.get("rel", ""), "href": target, "sizes": icon.get("sizes", "")})
         record.update(
             {
                 "title": extracted["title"],
@@ -359,6 +376,7 @@ class SiteAuditor:
                 "h1": extracted["h1"],
                 "canonical": next((value for value in canonicals if value), None),
                 "robots": extracted["robots"],
+                "icon_links": icon_links,
             }
         )
         internal_links: List[str] = []
@@ -454,6 +472,78 @@ class SiteAuditor:
             next_number += 1
         return candidates
 
+    def _root_favicon_url(self) -> str:
+        """Return the origin's implicit favicon URL that most browsers request."""
+
+        scheme, host, port = self.origin
+        default_port = 443 if scheme == "https" else 80
+        netloc = host if port == default_port else "%s:%s" % (host, port)
+        return urlunsplit((scheme, netloc, "/favicon.ico", "", ""))
+
+    @staticmethod
+    def _fetch_ok(status: Optional[int], error: Optional[str]) -> bool:
+        """Return whether a fetch's status/error pair represents a successful response."""
+
+        return error is None and status is not None and 200 <= status < 300
+
+    def _resolve_declared_icons(self, icon_links: Sequence[Mapping[str, str]]) -> List[Dict[str, Any]]:
+        """Fetch each declared icon at most once, never leaving the crawl's origin."""
+
+        resolved: List[Dict[str, Any]] = []
+        fetched = 0
+        for icon in icon_links:
+            href = str(icon.get("href", ""))
+            entry: Dict[str, Any] = {"rel": icon.get("rel", ""), "href": href, "sizes": icon.get("sizes", "")}
+            if not self._same_origin(href):
+                entry.update({"status": None, "error": None, "skipped_cross_origin": True})
+                resolved.append(entry)
+                continue
+            if fetched >= self.max_icon_fetches:
+                entry.update({"status": None, "error": None, "skipped_cross_origin": False, "skipped_fetch_limit": True})
+                resolved.append(entry)
+                continue
+            result = self._fetch(href)
+            fetched += 1
+            entry.update({"status": result.status, "error": result.error, "skipped_cross_origin": False})
+            resolved.append(entry)
+        return resolved
+
+    def _collect_favicon_evidence(self, start_page: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+        """Gather favicon/app-icon evidence using only bounded, same-origin requests."""
+
+        root_url = self._root_favicon_url()
+        root_result = self._fetch(root_url)
+        declared_icons = list((start_page or {}).get("icon_links") or [])
+        resolved_icons = self._resolve_declared_icons(declared_icons)
+        return {
+            "root_favicon": {"url": root_url, "status": root_result.status, "error": root_result.error},
+            "declared_icons": resolved_icons,
+        }
+
+    def _classify_favicon(self, evidence: Mapping[str, Any]) -> Dict[str, Any]:
+        """Classify favicon/app-icon health from already-gathered evidence.
+
+        TODO(human): decide the classification rules and return a dict shaped like
+        {"status": "ok" | "missing" | "broken" | "incomplete", "notes": [str, ...]}.
+
+        `evidence["root_favicon"]` is {"url", "status", "error"} for a direct fetch
+        of "<origin>/favicon.ico". `evidence["declared_icons"]` is a list of
+        {"rel", "href", "sizes", "status", "error", "skipped_cross_origin"} entries,
+        one per <link rel="icon"|"apple-touch-icon"|...> found on the start page.
+        Use self._fetch_ok(status, error) to test whether one fetch succeeded.
+
+        Follow the definitions in this package's
+        references/technical-seo.md#favicon-and-app-icons:
+        - "missing": no working root favicon AND no working declared icon.
+        - "broken": at least one declared icon exists but none of them resolve
+          (worse than missing — it signals a stale/incorrect link, not just an
+          absent one), and there is no working root fallback either.
+        - "incomplete": a favicon works (root or declared) but no working
+          apple-touch-icon is present, so home-screen/bookmark use looks unfinished.
+        - "ok": otherwise.
+        """
+        raise NotImplementedError("Implement favicon classification in scripts/audit_site.py (see TODO(human)).")
+
     def crawl(self) -> Dict[str, Any]:
         """Crawl reachable same-origin HTML pages and return a deterministic report."""
 
@@ -519,8 +609,27 @@ class SiteAuditor:
             if page.get("error") is not None or page.get("status") is None or int(page["status"]) >= 400
         )
         issue_candidates = self._issue_candidates(page_by_url, broken)
+
+        favicon_evidence: Optional[Dict[str, Any]] = None
+        favicon_classification: Optional[Dict[str, Any]] = None
+        if self.check_favicon:
+            favicon_evidence = self._collect_favicon_evidence(page_by_url.get(self.start_url))
+            favicon_classification = self._classify_favicon(favicon_evidence)
+            if favicon_classification.get("status") != "ok":
+                issue_candidates = issue_candidates + [
+                    self._issue_candidate(
+                        "AUDIT-%03d" % (len(issue_candidates) + 1),
+                        priority="MEDIUM" if favicon_classification.get("status") in {"missing", "broken"} else "LOW",
+                        observation="Favicon/app-icon evidence classified as %s." % favicon_classification.get("status"),
+                        affected_url=self.start_url,
+                        evidence_pointer={"report_section": "favicon"},
+                        scope={"site_wide": True},
+                        acceptance_test="A subsequent bounded crawl classifies favicon/app-icon evidence as ok.",
+                    )
+                ]
+
         report = {
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "start_url": self.start_url,
             "origin": {"scheme": self.origin[0], "host": self.origin[1], "port": self.origin[2]},
             "limits": {
@@ -538,6 +647,11 @@ class SiteAuditor:
             "duplicate_titles": self._duplicate_groups(pages, "title"),
             "duplicate_meta_descriptions": self._duplicate_groups(pages, "meta_description"),
             "nonempty_image_alt_observations": image_alts,
+            "favicon": (
+                {"evidence": favicon_evidence, "classification": favicon_classification}
+                if self.check_favicon
+                else None
+            ),
             "audit_issue_candidates": issue_candidates,
             "summary": {
                 "pages_fetched": len(pages),
@@ -548,6 +662,7 @@ class SiteAuditor:
                 "duplicate_title_groups": len(self._duplicate_groups(pages, "title")),
                 "duplicate_meta_description_groups": len(self._duplicate_groups(pages, "meta_description")),
                 "nonempty_image_alt_observations": len(image_alts),
+                "favicon_status": favicon_classification.get("status") if favicon_classification else None,
                 "audit_issue_candidates": len(issue_candidates),
             },
         }
@@ -578,6 +693,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-redirects", type=int, default=DEFAULT_MAX_REDIRECTS, help="Maximum redirect hops per URL (default: %(default)s)")
     parser.add_argument("--timeout", type=float, default=10.0, help="Timeout in seconds per request (default: %(default)s)")
     parser.add_argument("--max-body-bytes", type=int, default=DEFAULT_MAX_BODY_BYTES, help="Maximum bytes parsed per response (default: %(default)s)")
+    parser.add_argument("--skip-favicon-check", action="store_true", help="Skip the bounded favicon/app-icon evidence check")
+    parser.add_argument("--max-icon-fetches", type=int, default=DEFAULT_MAX_ICON_FETCHES, help="Maximum same-origin declared-icon URLs to fetch (default: %(default)s)")
     parser.add_argument("--output", help="Write JSON report to this path instead of stdout")
     return parser
 
@@ -592,6 +709,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             max_redirects=args.max_redirects,
             timeout=args.timeout,
             max_body_bytes=args.max_body_bytes,
+            check_favicon=not args.skip_favicon_check,
+            max_icon_fetches=args.max_icon_fetches,
         )
     except (ValueError, argparse.ArgumentError) as exc:
         parser.error(str(exc))

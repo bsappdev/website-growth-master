@@ -7,7 +7,7 @@ metadata:
 
 # Website Growth Engine
 
-Version 2.4.0 — a model-neutral, evidence-driven operating system.
+Version 2.5.0 — a model-neutral, evidence-driven operating system.
 
 ## Purpose and boundary
 
@@ -40,14 +40,19 @@ Use PASS, FAIL, NOT_TESTED, BLOCKED, and N/A only for acceptance criteria. N/A r
 4. Resume at the earliest invalidated or incomplete gate. Do not repeat valid research or rebuild working assets without a reason.
 5. If records are absent, run scripts/init_growth_state.py from the target project root, or create equivalent minimal records from templates. Do not overwrite existing records.
 6. Record capability states as AVAILABLE, NEEDS_ACCESS, or UNAVAILABLE. Missing access lowers confidence; it never authorizes invented data.
+7. For a new engagement or a URL with no prior evidence, run [the public, no-login baseline scan](#public-no-login-baseline-scan-first) before anything else that touches the current bottleneck.
 
 Before material work, establish: mode, audience/market, offer, primary outcome, denominator, system of record, guardrails, baseline status, authorization boundary, and current bottleneck. Ask only for a decision that blocks a material or irreversible action; make safe progress under explicit assumptions otherwise.
 
-## Upfront SEO and growth-data intake
+## Public, no-login baseline scan first
 
-At the start of every new growth engagement, before substantive diagnosis or recommendations, ask the user to confirm the availability of the following sources. Explain the purpose of each source in plain language. For each one, record `AVAILABLE`, `NEEDS_ACCESS`, `UNAVAILABLE`, or `N/A`, the authorized scope, and whether the user prefers to connect it, provide a read-only export, or proceed without it.
+Before asking the user for any account, export, or credential, run the free, no-login public scan: PageSpeed Insights, Pingdom/GTmetrix, SSL Labs, securityheaders.com, the Schema Markup Validator, the W3C validator, direct robots.txt/sitemap fetches, `scripts/audit_site.py`, and the favicon/app-icon check. Read [public-scan](references/public-scan.md) and run it now for any URL the user provides — it needs only the public site URL, never a sign-in. Diagnose and propose fixes for everything this scan can prove, per the [default-to-action rule](#default-to-action-rule), before raising the topic of connected accounts at all.
 
-Always present [the growth-data and access checklist](templates/growth-access-intake.template.md) as the first user-facing intake step. Keep the options visible for every relevant source: `Connect read-only`, `Share export`, `Skip for now`, or `N/A`. Do not begin substantive diagnosis until the user has responded, unless they explicitly ask to proceed with public evidence only. Do not request credentials in chat or connect any source until the user selects `Connect read-only` for that specific source.
+## Growth-data and account-access checklist, after the public scan
+
+Once the public scan's findings and proposed fixes are in front of the user, present the follow-up checklist for sources that need account access: things a public scan structurally cannot see, such as real user behavior, query-level search performance, conversions, and paid/social channel data. Explain the purpose of each source in plain language. For each one, record `AVAILABLE`, `NEEDS_ACCESS`, `UNAVAILABLE`, or `N/A`, the authorized scope, and whether the user prefers to connect it, provide a read-only export, or proceed without it.
+
+Present [the growth-data and access checklist](templates/growth-access-intake.template.md) as this follow-up step, not as a precondition for the work already done above. Keep the options visible for every relevant source: `Connect read-only`, `Share export`, `Skip for now`, or `N/A`. Continue acting on public evidence while the user considers the checklist; do not stall the engagement waiting for a response. Do not request credentials in chat or connect any source until the user selects `Connect read-only` for that specific source.
 
 | Source or access | Ask for it because it helps answer |
 | --- | --- |
@@ -169,6 +174,7 @@ Set an approved repair budget based on severity, reversibility, risk, maintenanc
 
 ## Research routing
 
+- Read [public-scan](references/public-scan.md) first, for any site, to run the free no-login toolkit before requesting account access.
 - Read [opportunity-research](references/opportunity-research.md) for audience demand, commercial fit, query clusters, and investment decisions.
 - Read [serp-intelligence](references/serp-intelligence.md) before claiming meaningful organic click opportunity.
 - Read [competitor-intelligence](references/competitor-intelligence.md) when a competitive observation could change scope or positioning.

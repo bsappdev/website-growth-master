@@ -72,7 +72,7 @@ class SiteAuditTests(unittest.TestCase):
             missing: ("error", 404, {}),
         }
         opener = MockOpener(routes)
-        report = audit_site.SiteAuditor(root, max_pages=10, opener=opener).crawl()
+        report = audit_site.SiteAuditor(root, max_pages=10, opener=opener, check_favicon=False).crawl()
 
         self.assertEqual(report["summary"]["pages_fetched"], 3)
         self.assertEqual([item["url"] for item in report["broken_internal_links"]], [missing])
@@ -90,12 +90,56 @@ class SiteAuditTests(unittest.TestCase):
     def test_cross_origin_redirect_is_reported_but_not_followed(self):
         root = "https://example.test/"
         opener = MockOpener({root: ("error", 302, {"location": "https://outside.test/"})})
-        report = audit_site.SiteAuditor(root, opener=opener).crawl()
+        report = audit_site.SiteAuditor(root, opener=opener, check_favicon=False).crawl()
 
         self.assertEqual([call[0] for call in opener.calls], [root])
         self.assertEqual(report["pages"][0]["error"], "cross_origin_redirect_blocked")
         self.assertEqual(report["audit_issue_candidates"][0]["priority"], "HIGH")
         self.assertEqual(report["summary"]["failed_pages"], 1)
+
+    def test_favicon_evidence_collects_root_and_declared_icons(self):
+        root = "https://example.test/"
+        favicon = "https://example.test/favicon.ico"
+        touch_icon = "https://example.test/apple-touch-icon.png"
+        page = {"icon_links": [{"rel": "apple-touch-icon", "href": touch_icon, "sizes": "180x180"}]}
+        opener = MockOpener(
+            {
+                favicon: FakeResponse(200, {"content-type": "image/x-icon"}, b"\x00"),
+                touch_icon: ("error", 404, {}),
+            }
+        )
+        auditor = audit_site.SiteAuditor(root, opener=opener, check_favicon=False)
+        evidence = auditor._collect_favicon_evidence(page)
+
+        self.assertEqual(evidence["root_favicon"], {"url": favicon, "status": 200, "error": None})
+        self.assertEqual(len(evidence["declared_icons"]), 1)
+        self.assertEqual(evidence["declared_icons"][0]["status"], 404)
+        self.assertFalse(evidence["declared_icons"][0]["skipped_cross_origin"])
+
+    def test_favicon_evidence_skips_cross_origin_declared_icons_without_fetching(self):
+        root = "https://example.test/"
+        favicon = "https://example.test/favicon.ico"
+        cdn_icon = "https://cdn.other-test/icon.png"
+        page = {"icon_links": [{"rel": "icon", "href": cdn_icon, "sizes": ""}]}
+        opener = MockOpener({favicon: ("error", 404, {})})
+        auditor = audit_site.SiteAuditor(root, opener=opener, check_favicon=False)
+        evidence = auditor._collect_favicon_evidence(page)
+
+        self.assertTrue(evidence["declared_icons"][0]["skipped_cross_origin"])
+        self.assertFalse(any(cdn_icon in call[0] for call in opener.calls))
+
+    def test_crawl_surfaces_pending_favicon_classification(self):
+        root = "https://example.test/"
+        favicon = "https://example.test/favicon.ico"
+        opener = MockOpener(
+            {
+                root: FakeResponse(200, {"content-type": "text/html"}, b"<title>Home</title>"),
+                favicon: ("error", 404, {}),
+            }
+        )
+        auditor = audit_site.SiteAuditor(root, opener=opener)
+        with self.assertRaises(NotImplementedError):
+            auditor.crawl()
 
     def test_url_normalization_rejects_credential_and_non_http_urls(self):
         self.assertIsNone(audit_site.normalize_http_url("javascript:alert(1)", "https://example.test/"))

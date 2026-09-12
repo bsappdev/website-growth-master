@@ -12,6 +12,8 @@ website-growth-engine/
 ├── evaluations/                # adversarial agent-behavior evaluations
 ├── assets/                     # thin adapters and use examples
 ├── archive/                    # preserved source version
+├── INSTALL.md                   # platform install steps, incl. one-click macOS installer
+├── CHANGELOG.md                 # what changed between versions
 ├── AUTOMATION.md                # helper contracts, exit codes, and limitations
 ├── WEAKNESS_AUDIT.md           # v1 assessment and treatment decisions
 ├── MIGRATION.md                # material differences from v1
@@ -26,6 +28,7 @@ SKILL.md is deliberately a control plane: it establishes evidence vocabulary, au
 
 | Need | Module |
 | --- | --- |
+| Free, no-login checks before requesting account access | public-scan |
 | Business goal, bottleneck, investment | strategy |
 | Demand/customer/query opportunity | opportunity-research |
 | Actual search-result opportunity | serp-intelligence |
