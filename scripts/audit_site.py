@@ -523,7 +523,7 @@ class SiteAuditor:
     def _classify_favicon(self, evidence: Mapping[str, Any]) -> Dict[str, Any]:
         """Classify favicon/app-icon health from already-gathered evidence.
 
-        TODO(human): decide the classification rules and return a dict shaped like
+        Returns a dict shaped like
         {"status": "ok" | "missing" | "broken" | "incomplete", "notes": [str, ...]}.
 
         `evidence["root_favicon"]` is {"url", "status", "error"} for a direct fetch
@@ -542,7 +542,30 @@ class SiteAuditor:
           apple-touch-icon is present, so home-screen/bookmark use looks unfinished.
         - "ok": otherwise.
         """
-        raise NotImplementedError("Implement favicon classification in scripts/audit_site.py (see TODO(human)).")
+        root = evidence.get("root_favicon") or {}
+        declared = list(evidence.get("declared_icons") or [])
+        root_ok = self._fetch_ok(root.get("status"), root.get("error"))
+        working = [i for i in declared if self._fetch_ok(i.get("status"), i.get("error"))]
+        failed = [
+            i for i in declared
+            if not i.get("skipped_cross_origin") and not i.get("skipped_fetch_limit")
+            and not self._fetch_ok(i.get("status"), i.get("error"))
+        ]
+        has_apple = any("apple-touch-icon" in str(i.get("rel", "")).lower() for i in working)
+        notes: List[str] = []
+        if not root_ok and not working:
+            if failed:
+                status = "broken"
+                notes.append("%d declared icon(s) did not resolve and /favicon.ico is not available." % len(failed))
+            else:
+                status = "missing"
+                notes.append("No working /favicon.ico and no working declared icon was observed.")
+        elif not has_apple:
+            status = "incomplete"
+            notes.append("A favicon works, but no working apple-touch-icon was observed.")
+        else:
+            status = "ok"
+        return {"status": status, "notes": notes}
 
     def crawl(self) -> Dict[str, Any]:
         """Crawl reachable same-origin HTML pages and return a deterministic report."""

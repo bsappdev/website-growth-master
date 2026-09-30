@@ -128,7 +128,7 @@ class SiteAuditTests(unittest.TestCase):
         self.assertTrue(evidence["declared_icons"][0]["skipped_cross_origin"])
         self.assertFalse(any(cdn_icon in call[0] for call in opener.calls))
 
-    def test_crawl_surfaces_pending_favicon_classification(self):
+    def test_crawl_reports_missing_favicon(self):
         root = "https://example.test/"
         favicon = "https://example.test/favicon.ico"
         opener = MockOpener(
@@ -137,9 +137,26 @@ class SiteAuditTests(unittest.TestCase):
                 favicon: ("error", 404, {}),
             }
         )
-        auditor = audit_site.SiteAuditor(root, opener=opener)
-        with self.assertRaises(NotImplementedError):
-            auditor.crawl()
+        report = audit_site.SiteAuditor(root, opener=opener).crawl()
+        self.assertEqual(report["favicon"]["classification"]["status"], "missing")
+
+    def test_classify_favicon_outcomes(self):
+        auditor = audit_site.SiteAuditor("https://example.test/", check_favicon=False)
+        ok = {"status": 200, "error": None}
+        bad = {"status": 404, "error": None}
+
+        def icon(rel, result):
+            return dict(result, rel=rel, href="/i.png", sizes="", skipped_cross_origin=False)
+
+        def classify(root, icons):
+            evidence = {"root_favicon": dict(root, url="x"), "declared_icons": icons}
+            return auditor._classify_favicon(evidence)["status"]
+
+        self.assertEqual(classify(bad, []), "missing")
+        self.assertEqual(classify(bad, [icon("icon", bad)]), "broken")
+        self.assertEqual(classify(ok, []), "incomplete")
+        self.assertEqual(classify(bad, [icon("icon", ok)]), "incomplete")
+        self.assertEqual(classify(ok, [icon("apple-touch-icon", ok)]), "ok")
 
     def test_url_normalization_rejects_credential_and_non_http_urls(self):
         self.assertIsNone(audit_site.normalize_http_url("javascript:alert(1)", "https://example.test/"))
